@@ -53,11 +53,14 @@ defmodule ChatRoom do
       user = Task.async(fn -> user_loop(username) end)
       Process.link(user.pid)
       updated_usernames = RoomAgent.store_username(username, user.pid, registered_usernames)
-      RoomAgent.update(updated_usernames) # Use the newly defined update function
+      # Use the newly defined update function
+      RoomAgent.update(updated_usernames)
       {:ok, username}
     else
       {:error, "Username already taken"}
     end
+
+    Process.exit()
   end
 
   def leave(username) do
@@ -70,32 +73,63 @@ defmodule ChatRoom do
       pid ->
         Process.exit(pid, :normal)
         updated_usernames = RoomAgent.remove_username(username, registered_usernames)
-        RoomAgent.update(updated_usernames) # Use the newly defined update function
+        # Use the newly defined update function
+        RoomAgent.update(updated_usernames)
         :ok
     end
   end
 
   def send_message(username, message) do
-    RoomAgent.add_message({username, message})
+    case RoomAgent.get_user_pid(username, RoomAgent.get_state()) do
+      nil ->
+        {:error, "You haven't joined the chat room yet."}
+      _ ->
+        RoomAgent.add_message({username, message})
+        {:ok, "Message sent successfully."}
+    end
   end
 
-  def get_messages do
-    RoomAgent.get_messages()
+  def get_messages(username) do
+    case RoomAgent.get_user_pid(username, RoomAgent.get_state()) do
+      nil ->
+        {:error, "You haven't joined the chat room yet."}
+      _ ->
+        RoomAgent.get_messages()
+    end
   end
 
   defp user_loop(username) do
-    receive do
-      {:join, _pid} ->
-        IO.puts("#{username} has joined the chat room.")
-        user_loop(username)
-
-      {:leave, _pid} ->
-        IO.puts("#{username} has left the chat room.")
+    case RoomAgent.get_user_pid(username, RoomAgent.get_state()) do
+      nil ->
+        IO.puts("You haven't joined the chat room yet.")
         :ok
+      _ ->
+        receive do
+          {:join, _pid} ->
+            IO.puts("#{username} has joined the chat room.")
+            user_loop(username)
 
-      {from, message} ->
-        IO.puts("#{from}: #{message}")
-        user_loop(username)
+          {:leave, _pid} ->
+            IO.puts("#{username} has left the chat room.")
+            :ok
+
+          {from, message} ->
+            IO.puts("#{from}: #{message}")
+            user_loop(username)
+        end
     end
   end
 end
+
+children = [
+  %{
+    id: ChatRoom,
+    start: {ChatRoom, :start, []},
+    restart: :permanent,
+    type: :worker
+  }
+]
+
+{:ok, pid} = Supervisor.start_link(children, strategy: :one_for_all)
+
+IO.inspect(pid)
